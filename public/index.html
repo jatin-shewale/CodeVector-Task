@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Product Browser</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #171a21;
+    --border: #262b35;
+    --text: #e8eaed;
+    --muted: #8a93a3;
+    --accent: #5b8cff;
+    --accent-soft: rgba(91,140,255,0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 24px 28px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  select, button {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    font-weight: 600;
+  }
+  button.primary:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .stats { color: var(--muted); font-size: 12px; margin-left: auto; }
+  main { padding: 20px 28px 60px; max-width: 1100px; margin: 0 auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 96px;
+    background: var(--bg);
+  }
+  tbody td {
+    padding: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr:hover { background: var(--accent-soft); }
+  .cat-pill {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .price { font-variant-numeric: tabular-nums; }
+  .id { color: var(--muted); font-size: 11px; font-family: monospace; }
+  .new-row { animation: flash 1.6s ease-out; }
+  @keyframes flash {
+    from { background: rgba(91,140,255,0.35); }
+    to { background: transparent; }
+  }
+  footer { text-align: center; padding: 24px; }
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Product Browser</h1>
+  <div class="sub">~200,000 products Â· newest first Â· cursor-based pagination</div>
+  <div class="controls">
+    <select id="categoryFilter">
+      <option value="">All categories</option>
+    </select>
+    <button id="resetBtn">Reset to newest</button>
+    <span class="stats" id="stats"></span>
+  </div>
+</header>
+
+<main>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:40%">Name</th>
+        <th>Category</th>
+        <th>Price</th>
+        <th>Created</th>
+        <th>Updated</th>
+        <th>ID</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <footer>
+    <button id="loadMoreBtn" class="primary">Load more</button>
+    <div id="endMsg" class="sub" style="display:none;">No more products.</div>
+  </footer>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = ""; // same origin
+let nextCursor = null;
+let currentCategory = "";
+let loading = false;
+let seenIds = new Set(); // sanity check, used to flag accidental duplicates in the UI
+
+const rowsEl = document.getElementById("rows");
+const loadMoreBtn = document.getElementById("loadMoreBtn");
+const endMsg = document.getElementById("endMsg");
+const categoryFilter = document.getElementById("categoryFilter");
+const statsEl = document.getElementById("stats");
+const toastEl = document.getElementById("toast");
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function showToast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  setTimeout(() => toastEl.classList.remove("show"), 2500);
+}
+
+async function loadCategories() {
+  const res = await fetch(`${API}/api/categories`);
+  const data = await res.json();
+  for (const c of data.categories) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    categoryFilter.appendChild(opt);
+  }
+}
+
+async function loadStats() {
+  const res = await fetch(`${API}/api/stats`);
+  const data = await res.json();
+  statsEl.textContent = `${data.totalProducts.toLocaleString()} products in DB`;
+}
+
+function renderRow(p, highlight) {
+  const tr = document.createElement("tr");
+  if (highlight) tr.classList.add("new-row");
+  tr.innerHTML = `
+    <td>${p.name}</td>
+    <td><span class="cat-pill">${p.category}</span></td>
+    <td class="price">$${p.price.toFixed(2)}</td>
+    <td>${fmtDate(p.created_at)}</td>
+    <td>${fmtDate(p.updated_at)}</td>
+    <td class="id">${p.id}</td>
+  `;
+  rowsEl.appendChild(tr);
+}
+
+async function loadPage(reset = false) {
+  if (loading) return;
+  loading = true;
+  loadMoreBtn.disabled = true;
+  loadMoreBtn.textContent = "Loading...";
+
+  if (reset) {
+    nextCursor = null;
+    rowsEl.innerHTML = "";
+    seenIds = new Set();
+    endMsg.style.display = "none";
+  }
+
+  const params = new URLSearchParams();
+  params.set("limit", "25");
+  if (currentCategory) params.set("category", currentCategory);
+  if (nextCursor) params.set("cursor", nextCursor);
+
+  const res = await fetch(`${API}/api/products?${params.toString()}`);
+  const data = await res.json();
+
+  let dupeCount = 0;
+  for (const p of data.items) {
+    if (seenIds.has(p.id)) dupeCount++;
+    seenIds.add(p.id);
+    renderRow(p, false);
+  }
+  if (dupeCount > 0) showToast(`Warning: ${dupeCount} duplicate(s) detected`);
+
+  nextCursor = data.nextCursor;
+  loadMoreBtn.disabled = false;
+  loadMoreBtn.textContent = "Load more";
+  loading = false;
+
+  if (!data.hasMore) {
+    loadMoreBtn.style.display = "none";
+    endMsg.style.display = "block";
+  } else {
+    loadMoreBtn.style.display = "inline-block";
+    endMsg.style.display = "none";
+  }
+}
+
+categoryFilter.addEventListener("change", () => {
+  currentCategory = categoryFilter.value;
+  loadPage(true);
+});
+
+document.getElementById("resetBtn").addEventListener("click", () => loadPage(true));
+loadMoreBtn.addEventListener("click", () => loadPage(false));
+
+(async function init() {
+  await loadCategories();
+  await loadStats();
+  await loadPage(true);
+})();
+</script>
+</body>
+</html>
