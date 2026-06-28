@@ -113,7 +113,7 @@
 
 <header>
   <h1>Product Browser</h1>
-  <div class="sub">~200,000 products Â· newest first Â· cursor-based pagination</div>
+  <div class="sub">~200,000 products | newest first | page-based loading</div>
   <div class="controls">
     <select id="categoryFilter">
       <option value="">All categories</option>
@@ -147,7 +147,7 @@
 
 <script>
 const API = ""; // same origin
-let nextCursor = null;
+let currentPage = 1;
 let currentCategory = "";
 let loading = false;
 let seenIds = new Set(); // sanity check, used to flag accidental duplicates in the UI
@@ -208,7 +208,7 @@ async function loadPage(reset = false) {
   loadMoreBtn.textContent = "Loading...";
 
   if (reset) {
-    nextCursor = null;
+    currentPage = 1;
     rowsEl.innerHTML = "";
     seenIds = new Set();
     endMsg.style.display = "none";
@@ -216,8 +216,8 @@ async function loadPage(reset = false) {
 
   const params = new URLSearchParams();
   params.set("limit", "25");
+  params.set("page", String(currentPage));
   if (currentCategory) params.set("category", currentCategory);
-  if (nextCursor) params.set("cursor", nextCursor);
 
   const res = await fetch(`${API}/api/products?${params.toString()}`);
   const data = await res.json();
@@ -230,7 +230,7 @@ async function loadPage(reset = false) {
   }
   if (dupeCount > 0) showToast(`Warning: ${dupeCount} duplicate(s) detected`);
 
-  nextCursor = data.nextCursor;
+  currentPage += 1;
   loadMoreBtn.disabled = false;
   loadMoreBtn.textContent = "Load more";
   loading = false;
@@ -260,3 +260,5 @@ loadMoreBtn.addEventListener("click", () => loadPage(false));
 </script>
 </body>
 </html>
+
+

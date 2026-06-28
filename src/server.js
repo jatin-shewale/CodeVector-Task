@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
 const app = express();
@@ -12,64 +11,35 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-const DEFAULT_LIMIT = 20;
+const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
-
-function encodeCursor(doc) {
-  const payload = JSON.stringify({
-    created_at: doc.created_at.toISOString(),
-    id: doc._id.toString(),
-  });
-  return Buffer.from(payload, "utf8").toString("base64url");
-}
-
-function decodeCursor(cursor) {
-  try {
-    const payload = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-    return {
-      created_at: new Date(payload.created_at),
-      id: new ObjectId(payload.id),
-    };
-  } catch (err) {
-    return null;
-  }
-}
 
 app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
     const collection = db.collection("products");
 
+    // Page numbers are easier to read and explain.
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     let limit = parseInt(req.query.limit, 10) || DEFAULT_LIMIT;
     limit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+    const skip = (page - 1) * limit;
 
+    // Optional category filter.
     const filter = {};
     if (req.query.category) {
       filter.category = req.query.category;
     }
 
-    if (req.query.cursor) {
-      const decoded = decodeCursor(req.query.cursor);
-      if (!decoded) {
-        return res.status(400).json({ error: "Invalid cursor" });
-      }
-      
-      filter.$or = [
-        { created_at: { $lt: decoded.created_at } },
-        { created_at: decoded.created_at, _id: { $lt: decoded.id } },
-      ];
-    }
-
+    const total = await collection.countDocuments(filter);
     const docs = await collection
       .find(filter)
       .sort({ created_at: -1, _id: -1 })
-      .limit(limit + 1)
+      .skip(skip)
+      .limit(limit)
       .toArray();
 
-    const hasMore = docs.length > limit;
-    const pageDocs = hasMore ? docs.slice(0, limit) : docs;
-
-    const items = pageDocs.map((d) => ({
+    const items = docs.map((d) => ({
       id: d._id.toString(),
       name: d.name,
       category: d.category,
@@ -78,13 +48,13 @@ app.get("/api/products", async (req, res) => {
       updated_at: d.updated_at,
     }));
 
-    const nextCursor =
-      hasMore && pageDocs.length > 0 ? encodeCursor(pageDocs[pageDocs.length - 1]) : null;
-
     res.json({
       items,
-      nextCursor,
-      hasMore,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      hasMore: skip + items.length < total,
     });
   } catch (err) {
     console.error(err);
